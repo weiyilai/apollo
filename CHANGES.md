@@ -26,5 +26,6 @@ Apollo 2.5.0
 * [Feature: Support ordinary users to modify personal information](https://github.com/apolloconfig/apollo/pull/5511)
 * [Feature: Support exporting and importing configurations for specified applications and clusters](https://github.com/apolloconfig/apollo/pull/5517)
 * [doc: Add rust apollo client link](https://github.com/apolloconfig/apollo/pull/5514)
+* [Perf: optimize namespace-related interface](https://github.com/apolloconfig/apollo/pull/5518)
 ------------------
 All issues and pull requests are [here](https://github.com/apolloconfig/apollo/milestone/16?closed=1)

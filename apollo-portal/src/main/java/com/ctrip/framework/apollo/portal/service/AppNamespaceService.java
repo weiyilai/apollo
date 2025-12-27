@@ -70,6 +70,10 @@ public class AppNamespaceService {
     return appNamespaceRepository.findByIsPublicTrue();
   }
 
+  public List<String> findPublicAppNamespaceNames() {
+    return appNamespaceRepository.findNamesByIsPublicTrue();
+  }
+
   public AppNamespace findPublicAppNamespace(String namespaceName) {
     List<AppNamespace> appNamespaces =
         appNamespaceRepository.findByNameAndIsPublic(namespaceName, true);
