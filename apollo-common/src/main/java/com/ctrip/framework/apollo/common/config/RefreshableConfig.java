@@ -16,25 +16,23 @@
  */
 package com.ctrip.framework.apollo.common.config;
 
-import com.google.common.base.Splitter;
-import com.google.common.base.Strings;
-
 import com.ctrip.framework.apollo.core.utils.ApolloThreadFactory;
 import com.ctrip.framework.apollo.tracer.Tracer;
-
+import com.google.common.base.Splitter;
+import com.google.common.base.Strings;
+import jakarta.annotation.PostConstruct;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.util.CollectionUtils;
-
-import java.util.List;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-
-import jakarta.annotation.PostConstruct;
 
 
 public abstract class RefreshableConfig implements DisposableBean {
@@ -46,6 +44,7 @@ public abstract class RefreshableConfig implements DisposableBean {
   private static final int CONFIG_REFRESH_INTERVAL = 60;
 
   protected Splitter splitter = Splitter.on(LIST_SEPARATOR).omitEmptyStrings().trimResults();
+  protected static final String[] EMPTY_STRING_ARRAY = new String[0];
 
   @Autowired
   private ConfigurableEnvironment environment;
@@ -94,6 +93,24 @@ public abstract class RefreshableConfig implements DisposableBean {
     }
   }
 
+  /**
+   * Trims each element and omits empty strings. Use for comma-separated configs where empty
+   * items (e.g. from consecutive commas) should be omitted.
+   */
+  protected List<String> trimAndOmitEmpty(String[] arr) {
+    if (arr == null || arr.length == 0) {
+      return Collections.emptyList();
+    }
+    List<String> result = new ArrayList<>();
+    for (String s : arr) {
+      String trimmed = s.trim();
+      if (!trimmed.isEmpty()) {
+        result.add(trimmed);
+      }
+    }
+    return result;
+  }
+
   public int getIntProperty(String key, int defaultValue) {
     try {
       String value = getValue(key);
@@ -135,6 +152,15 @@ public abstract class RefreshableConfig implements DisposableBean {
 
   public String getValue(String key) {
     return environment.getProperty(key);
+  }
+
+  public int checkInt(int value, int min, int max, int defaultValue) {
+    if (value >= min && value <= max) {
+      return value;
+    }
+    logger.warn("Configuration value '{}' is out of bounds [{} - {}]. Using default value '{}'.",
+        value, min, max, defaultValue);
+    return defaultValue;
   }
 
 }

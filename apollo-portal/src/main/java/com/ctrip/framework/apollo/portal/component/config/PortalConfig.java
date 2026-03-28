@@ -32,7 +32,6 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,6 +46,13 @@ public class PortalConfig extends RefreshableConfig {
       5 * 60; // 5min
   private static final int DEFAULT_REFRESH_ADMIN_SERVER_ADDRESS_TASK_OFFLINE_INTERVAL_IN_SECOND =
       10; // 10s
+
+  private static final int DEFAULT_CONNECT_TIMEOUT = 3000;
+  private static final int DEFAULT_READ_TIMEOUT = 10000;
+  private static final int DEFAULT_CONNECTION_TIME_TO_LIVE = -1;
+  private static final int DEFAULT_CONNECT_POOL_MAX_TOTAL = 20;
+  private static final int DEFAULT_CONNECT_POOL_MAX_PER_ROUTE = 2;
+  private static final int DEFAULT_PER_ENV_SEARCH_MAX_RESULTS = 200;
 
   private static final Gson GSON = new Gson();
   private static final Type ORGANIZATION = new TypeToken<List<Organization>>() {}.getType();
@@ -81,16 +87,15 @@ public class PortalConfig extends RefreshableConfig {
     String[] configurations =
         getArrayProperty("apollo.portal.envs", new String[] {"FAT", "UAT", "PRO"});
     List<Env> envs = Lists.newLinkedList();
-
-    for (String env : configurations) {
-      envs.add(Env.addEnvironment(env));
+    for (String envName : trimAndOmitEmpty(configurations)) {
+      envs.add(Env.addEnvironment(envName));
     }
-
     return envs;
   }
 
   public int getPerEnvSearchMaxResults() {
-    return getIntProperty("apollo.portal.search.perEnvMaxResults", 200);
+    return getIntProperty("apollo.portal.search.perEnvMaxResults",
+        DEFAULT_PER_ENV_SEARCH_MAX_RESULTS);
   }
 
   /**
@@ -124,32 +129,19 @@ public class PortalConfig extends RefreshableConfig {
   }
 
   public Set<Env> emailSupportedEnvs() {
-    String[] configurations = getArrayProperty("email.supported.envs", null);
-
-    Set<Env> result = Sets.newHashSet();
-    if (configurations == null) {
-      return result;
-    }
-
-    for (String env : configurations) {
-      result.add(Env.valueOf(env));
-    }
-
-    return result;
+    return getEnvSetProperty("email.supported.envs", null);
   }
 
   public Set<Env> webHookSupportedEnvs() {
-    String[] configurations = getArrayProperty("webhook.supported.envs", null);
+    return getEnvSetProperty("webhook.supported.envs", null);
+  }
 
+  private Set<Env> getEnvSetProperty(String key, String[] defaultValue) {
+    String[] configurations = getArrayProperty(key, defaultValue);
     Set<Env> result = Sets.newHashSet();
-    if (configurations == null) {
-      return result;
+    for (String envName : trimAndOmitEmpty(configurations)) {
+      result.add(Env.valueOf(envName));
     }
-
-    for (String env : configurations) {
-      result.add(Env.valueOf(env));
-    }
-
     return result;
   }
 
@@ -163,9 +155,9 @@ public class PortalConfig extends RefreshableConfig {
     String normalizedEnv = transformedEnv.getName();
 
     String[] configViewMemberOnlyEnvs =
-        getArrayProperty("configView.memberOnly.envs", new String[0]);
+        getArrayProperty("configView.memberOnly.envs", EMPTY_STRING_ARRAY);
 
-    for (String memberOnlyEnv : configViewMemberOnlyEnvs) {
+    for (String memberOnlyEnv : trimAndOmitEmpty(configViewMemberOnlyEnvs)) {
       // Normalize configured env as well for consistent comparison
       Env configEnv = Env.transformEnv(memberOnlyEnv);
       if (configEnv != Env.UNKNOWN && configEnv.getName().equals(normalizedEnv)) {
@@ -180,30 +172,36 @@ public class PortalConfig extends RefreshableConfig {
    * Level: normal
    **/
   public int connectTimeout() {
-    return getIntProperty("api.connectTimeout", 3000);
+    return getIntProperty("api.connectTimeout", DEFAULT_CONNECT_TIMEOUT);
   }
 
   public int readTimeout() {
-    return getIntProperty("api.readTimeout", 10000);
+    return getIntProperty("api.readTimeout", DEFAULT_READ_TIMEOUT);
   }
 
   public int connectionTimeToLive() {
-    return getIntProperty("api.connectionTimeToLive", -1);
+    return getIntProperty("api.connectionTimeToLive", DEFAULT_CONNECTION_TIME_TO_LIVE);
   }
 
   public int connectPoolMaxTotal() {
-    return getIntProperty("api.pool.max.total", 20);
+    return getIntProperty("api.pool.max.total", DEFAULT_CONNECT_POOL_MAX_TOTAL);
   }
 
   public int connectPoolMaxPerRoute() {
-    return getIntProperty("api.pool.max.per.route", 2);
+    return getIntProperty("api.pool.max.per.route", DEFAULT_CONNECT_POOL_MAX_PER_ROUTE);
   }
 
   public List<Organization> organizations() {
-
     String organizations = getValue("organizations");
-    return organizations == null ? Collections.emptyList()
-        : GSON.fromJson(organizations, ORGANIZATION);
+    if (organizations == null) {
+      return Collections.emptyList();
+    }
+    try {
+      return GSON.fromJson(organizations, ORGANIZATION);
+    } catch (Exception e) {
+      logger.error("Wrong format for: organizations", e);
+      return Collections.emptyList();
+    }
   }
 
   public String portalAddress() {
@@ -225,13 +223,18 @@ public class PortalConfig extends RefreshableConfig {
   }
 
   public boolean isEmergencyPublishAllowed(Env env) {
-    String targetEnv = env.getName();
+    Env transformedEnv = Env.transformEnv(env.getName());
+    if (Env.UNKNOWN == transformedEnv) {
+      return false;
+    }
+    String normalizedEnv = transformedEnv.getName();
 
     String[] emergencyPublishSupportedEnvs =
-        getArrayProperty("emergencyPublish.supported.envs", new String[0]);
+        getArrayProperty("emergencyPublish.supported.envs", EMPTY_STRING_ARRAY);
 
-    for (String supportedEnv : emergencyPublishSupportedEnvs) {
-      if (Objects.equals(targetEnv, supportedEnv.toUpperCase().trim())) {
+    for (String supportedEnv : trimAndOmitEmpty(emergencyPublishSupportedEnvs)) {
+      Env configEnv = Env.transformEnv(supportedEnv);
+      if (configEnv != Env.UNKNOWN && configEnv.getName().equals(normalizedEnv)) {
         return true;
       }
     }
@@ -243,18 +246,7 @@ public class PortalConfig extends RefreshableConfig {
    * Level: low
    **/
   public Set<Env> publishTipsSupportedEnvs() {
-    String[] configurations = getArrayProperty("namespace.publish.tips.supported.envs", null);
-
-    Set<Env> result = Sets.newHashSet();
-    if (configurations == null) {
-      return result;
-    }
-
-    for (String env : configurations) {
-      result.add(Env.valueOf(env));
-    }
-
-    return result;
+    return getEnvSetProperty("namespace.publish.tips.supported.envs", null);
   }
 
   public String consumerTokenSalt() {
@@ -331,18 +323,11 @@ public class PortalConfig extends RefreshableConfig {
 
   public List<String> getUserPasswordNotAllowList() {
     String[] value = getArrayProperty("apollo.portal.auth.user-password-not-allow-list", null);
-    if (value == null || value.length == 0) {
+    List<String> filtered = trimAndOmitEmpty(value);
+    if (filtered.isEmpty()) {
       return DEFAULT_USER_PASSWORD_NOT_ALLOW_LIST;
     }
-    return Arrays.asList(value);
+    return filtered;
   }
 
-  private int checkInt(int value, int min, int max, int defaultValue) {
-    if (value >= min && value <= max) {
-      return value;
-    }
-    logger.warn("Configuration value '{}' is out of bounds [{} - {}]. Using default value '{}'.",
-        value, min, max, defaultValue);
-    return defaultValue;
-  }
 }

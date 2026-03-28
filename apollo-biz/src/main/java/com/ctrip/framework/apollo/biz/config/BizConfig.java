@@ -38,7 +38,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class BizConfig extends RefreshableConfig {
 
-  private final static Logger logger = LoggerFactory.getLogger(BizConfig.class);
+  private static final Logger logger = LoggerFactory.getLogger(BizConfig.class);
 
   private static final int DEFAULT_ITEM_KEY_LENGTH = 128;
   private static final int DEFAULT_ITEM_VALUE_LENGTH = 20000;
@@ -66,6 +66,8 @@ public class BizConfig extends RefreshableConfig {
   private static final int DEFAULT_INSTANCE_CONFIG_AUDIT_TIME_THRESHOLD_IN_MINUTE = 10;// 10 minutes
 
   private static final Gson GSON = new Gson();
+
+  private static final TimeUnit INTERVAL_TIME_UNIT = TimeUnit.SECONDS;
 
   private static final Type appIdValueLengthOverrideTypeReference =
       new TypeToken<Map<String, Integer>>() {}.getType();
@@ -140,7 +142,8 @@ public class BizConfig extends RefreshableConfig {
   }
 
   public Set<String> namespaceNumLimitWhite() {
-    return Sets.newHashSet(getArrayProperty("namespace.num.limit.white", new String[0]));
+    String[] arr = getArrayProperty("namespace.num.limit.white", EMPTY_STRING_ARRAY);
+    return Sets.newHashSet(trimAndOmitEmpty(arr));
   }
 
   public boolean isItemNumLimitEnabled() {
@@ -163,7 +166,7 @@ public class BizConfig extends RefreshableConfig {
   }
 
   public TimeUnit appNamespaceCacheScanIntervalTimeUnit() {
-    return TimeUnit.SECONDS;
+    return INTERVAL_TIME_UNIT;
   }
 
   public int appNamespaceCacheRebuildInterval() {
@@ -173,7 +176,7 @@ public class BizConfig extends RefreshableConfig {
   }
 
   public TimeUnit appNamespaceCacheRebuildIntervalTimeUnit() {
-    return TimeUnit.SECONDS;
+    return INTERVAL_TIME_UNIT;
   }
 
   public int accessKeyCacheScanInterval() {
@@ -183,7 +186,7 @@ public class BizConfig extends RefreshableConfig {
   }
 
   public TimeUnit accessKeyCacheScanIntervalTimeUnit() {
-    return TimeUnit.SECONDS;
+    return INTERVAL_TIME_UNIT;
   }
 
   public int accessKeyCacheRebuildInterval() {
@@ -193,7 +196,7 @@ public class BizConfig extends RefreshableConfig {
   }
 
   public TimeUnit accessKeyCacheRebuildIntervalTimeUnit() {
-    return TimeUnit.SECONDS;
+    return INTERVAL_TIME_UNIT;
   }
 
   public int accessKeyAuthTimeDiffTolerance() {
@@ -222,7 +225,7 @@ public class BizConfig extends RefreshableConfig {
   }
 
   public TimeUnit releaseMessageCacheScanIntervalTimeUnit() {
-    return TimeUnit.SECONDS;
+    return INTERVAL_TIME_UNIT;
   }
 
   public int releaseMessageScanIntervalInMilli() {
@@ -283,13 +286,6 @@ public class BizConfig extends RefreshableConfig {
 
   public boolean isConfigServiceIncrementalChangeEnabled() {
     return getBooleanProperty("config-service.incremental.change.enabled", false);
-  }
-
-  int checkInt(int value, int min, int max, int defaultValue) {
-    if (value >= min && value <= max) {
-      return value;
-    }
-    return defaultValue;
   }
 
   public boolean isAdminServiceAccessControlEnabled() {
