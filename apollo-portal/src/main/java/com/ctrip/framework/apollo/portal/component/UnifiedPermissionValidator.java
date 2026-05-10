@@ -41,7 +41,7 @@ public class UnifiedPermissionValidator implements PermissionValidator {
     if (UserIdentityConstants.CONSUMER.equals(type)) {
       return consumerPermissionValidator;
     }
-    throw new IllegalStateException("Unknown authentication type");
+    throw new IllegalStateException("Unknown authentication type: " + type);
   }
 
   @Override
