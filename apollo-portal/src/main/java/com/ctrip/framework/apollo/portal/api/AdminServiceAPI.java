@@ -604,6 +604,12 @@ public class AdminServiceAPI {
     public ServerConfig createOrUpdateConfigDBConfig(Env env, ServerConfig serverConfig) {
       return restTemplate.post(env, "/server/config", serverConfig, ServerConfig.class);
     }
+
+    @ApolloAuditLog(type = OpType.RPC, name = "ServerConfig.deleteConfigDBConfigInRemote")
+    public void deleteConfigDBConfig(Env env, String key, String cluster, String operator) {
+      restTemplate.delete(env, "/server/config?key={key}&cluster={cluster}&operator={operator}",
+          key, cluster, operator);
+    }
   }
 
 }
