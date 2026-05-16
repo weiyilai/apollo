@@ -16,6 +16,7 @@
  */
 package com.ctrip.framework.apollo.openapi.service;
 
+import com.ctrip.framework.apollo.common.exception.BadRequestException;
 import com.ctrip.framework.apollo.openapi.entity.Consumer;
 import com.ctrip.framework.apollo.openapi.entity.ConsumerRole;
 import com.ctrip.framework.apollo.openapi.entity.ConsumerToken;
@@ -30,7 +31,6 @@ import com.ctrip.framework.apollo.portal.entity.vo.consumer.ConsumerInfo;
 import com.ctrip.framework.apollo.portal.environment.Env;
 import com.ctrip.framework.apollo.portal.repository.RoleRepository;
 import com.ctrip.framework.apollo.portal.service.RolePermissionService;
-import com.ctrip.framework.apollo.portal.spi.UserInfoHolder;
 import com.ctrip.framework.apollo.portal.spi.UserService;
 import com.ctrip.framework.apollo.portal.util.RoleUtils;
 import org.junit.jupiter.api.BeforeEach;
@@ -53,8 +53,6 @@ import static org.junit.jupiter.api.Assertions.*;
 public class ConsumerServiceTest {
   @MockitoSpyBean
   private ConsumerService consumerService;
-  @MockitoBean
-  UserInfoHolder userInfoHolder;
   @MockitoBean
   ConsumerTokenRepository consumerTokenRepository;
   @MockitoBean
@@ -178,11 +176,27 @@ public class ConsumerServiceTest {
 
     when(consumerRepository.findByAppId(testAppId)).thenReturn(null);
     when(userService.findByUserId(testOwner)).thenReturn(owner);
-    when(userInfoHolder.getUser()).thenReturn(owner);
-
-    consumerService.createConsumer(consumer);
+    consumerService.createConsumer(consumer, testOwner);
 
     verify(consumerRepository).save(consumer);
+  }
+
+  @Test
+  public void writeMethodsShouldRejectBlankOperator() {
+    Consumer consumer = createConsumer(testConsumerName, testAppId, testOwner);
+
+    assertThrows(BadRequestException.class, () -> consumerService.createConsumer(consumer, " "));
+    assertThrows(BadRequestException.class,
+        () -> consumerService.generateAndSaveConsumerToken(consumer, 0, new Date(), " "));
+    assertThrows(BadRequestException.class,
+        () -> consumerService.assignNamespaceRoleToConsumer("token", testAppId, "namespace", " "));
+    assertThrows(BadRequestException.class,
+        () -> consumerService.assignCreateApplicationRoleToConsumer("token", " "));
+    assertThrows(BadRequestException.class,
+        () -> consumerService.assignAppRoleToConsumer("token", testAppId, " "));
+    assertThrows(BadRequestException.class,
+        () -> consumerService.assignAppRoleToConsumer(1L, testAppId, " "));
+    assertThrows(BadRequestException.class, () -> consumerService.createConsumerRole(1L, 2L, " "));
   }
 
   @Test
@@ -215,9 +229,6 @@ public class ConsumerServiceTest {
     when(consumerRoleRepository.findByConsumerIdAndRoleId(consumerId, modifyRoleId))
         .thenReturn(null);
 
-    UserInfo owner = createUser(testOwner);
-    when(userInfoHolder.getUser()).thenReturn(owner);
-
     ConsumerRole namespaceModifyConsumerRole = createConsumerRole(consumerId, modifyRoleId);
     ConsumerRole namespaceEnvModifyConsumerRole = createConsumerRole(consumerId, envModifyRoleId);
     ConsumerRole namespaceReleaseConsumerRole = createConsumerRole(consumerId, releaseRoleId);
@@ -231,9 +242,9 @@ public class ConsumerServiceTest {
     doReturn(namespaceEnvReleaseConsumerRole).when(consumerService).createConsumerRole(consumerId,
         envReleaseRoleId, testOwner);
 
-    consumerService.assignNamespaceRoleToConsumer(token, testAppId, testNamespace);
+    consumerService.assignNamespaceRoleToConsumer(token, testAppId, testNamespace, testOwner);
     consumerService.assignNamespaceRoleToConsumer(token, testAppId, testNamespace,
-        Env.DEV.toString());
+        Env.DEV.toString(), testOwner);
 
     verify(consumerRoleRepository).save(namespaceModifyConsumerRole);
     verify(consumerRoleRepository).save(namespaceEnvModifyConsumerRole);

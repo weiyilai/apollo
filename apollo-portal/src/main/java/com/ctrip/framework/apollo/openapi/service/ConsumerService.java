@@ -34,7 +34,6 @@ import com.ctrip.framework.apollo.portal.entity.po.Role;
 import com.ctrip.framework.apollo.portal.entity.vo.consumer.ConsumerInfo;
 import com.ctrip.framework.apollo.portal.repository.RoleRepository;
 import com.ctrip.framework.apollo.portal.service.RolePermissionService;
-import com.ctrip.framework.apollo.portal.spi.UserInfoHolder;
 import com.ctrip.framework.apollo.portal.spi.UserService;
 import com.ctrip.framework.apollo.portal.util.RoleUtils;
 import com.google.common.base.Charsets;
@@ -69,7 +68,6 @@ public class ConsumerService {
       FastDateFormat.getInstance("yyyyMMddHHmmss");
   private static final Joiner KEY_JOINER = Joiner.on("|");
 
-  private final UserInfoHolder userInfoHolder;
   private final ConsumerTokenRepository consumerTokenRepository;
   private final ConsumerRepository consumerRepository;
   private final ConsumerAuditRepository consumerAuditRepository;
@@ -79,14 +77,12 @@ public class ConsumerService {
   private final UserService userService;
   private final RoleRepository roleRepository;
 
-  public ConsumerService(final UserInfoHolder userInfoHolder,
-      final ConsumerTokenRepository consumerTokenRepository,
+  public ConsumerService(final ConsumerTokenRepository consumerTokenRepository,
       final ConsumerRepository consumerRepository,
       final ConsumerAuditRepository consumerAuditRepository,
       final ConsumerRoleRepository consumerRoleRepository, final PortalConfig portalConfig,
       final RolePermissionService rolePermissionService, final UserService userService,
       final RoleRepository roleRepository) {
-    this.userInfoHolder = userInfoHolder;
     this.consumerTokenRepository = consumerTokenRepository;
     this.consumerRepository = consumerRepository;
     this.consumerAuditRepository = consumerAuditRepository;
@@ -98,7 +94,8 @@ public class ConsumerService {
   }
 
 
-  public Consumer createConsumer(Consumer consumer) {
+  public Consumer createConsumer(Consumer consumer, String operator) {
+    validateOperator(operator);
     String appId = consumer.getAppId();
 
     Consumer managedConsumer = consumerRepository.findByAppId(appId);
@@ -113,7 +110,6 @@ public class ConsumerService {
     }
     consumer.setOwnerEmail(owner.getEmail());
 
-    String operator = userInfoHolder.getUser().getUserId();
     consumer.setDataChangeCreatedBy(operator);
     consumer.setDataChangeLastModifiedBy(operator);
 
@@ -121,10 +117,11 @@ public class ConsumerService {
   }
 
   public ConsumerToken generateAndSaveConsumerToken(Consumer consumer, Integer rateLimit,
-      Date expires) {
+      Date expires, String operator) {
+    validateOperator(operator);
     Preconditions.checkArgument(consumer != null, "Consumer can not be null");
 
-    ConsumerToken consumerToken = generateConsumerToken(consumer, rateLimit, expires);
+    ConsumerToken consumerToken = generateConsumerToken(consumer, rateLimit, expires, operator);
     consumerToken.setId(0);
 
     return consumerTokenRepository.save(consumerToken);
@@ -157,13 +154,15 @@ public class ConsumerService {
 
   @Transactional
   public List<ConsumerRole> assignNamespaceRoleToConsumer(String token, String appId,
-      String namespaceName) {
-    return assignNamespaceRoleToConsumer(token, appId, namespaceName, null);
+      String namespaceName, String operator) {
+    validateOperator(operator);
+    return assignNamespaceRoleToConsumer(token, appId, namespaceName, null, operator);
   }
 
   @Transactional
   public List<ConsumerRole> assignNamespaceRoleToConsumer(String token, String appId,
-      String namespaceName, String env) {
+      String namespaceName, String env, String operator) {
+    validateOperator(operator);
     Long consumerId = getConsumerIdByToken(token);
     if (consumerId == null) {
       throw new BadRequestException("Token is Illegal");
@@ -189,8 +188,6 @@ public class ConsumerService {
     if (managedModifyRole != null && managedReleaseRole != null) {
       return Arrays.asList(managedModifyRole, managedReleaseRole);
     }
-
-    String operator = userInfoHolder.getUser().getUserId();
 
     ConsumerRole namespaceModifyConsumerRole =
         createConsumerRole(consumerId, namespaceModifyRoleId, operator);
@@ -282,7 +279,8 @@ public class ConsumerService {
     return rolePermissionService.findRoleByRoleName(CREATE_APPLICATION_ROLE_NAME);
   }
 
-  public ConsumerRole assignCreateApplicationRoleToConsumer(String token) {
+  public ConsumerRole assignCreateApplicationRoleToConsumer(String token, String operator) {
+    validateOperator(operator);
     Long consumerId = getConsumerIdByToken(token);
     if (consumerId == null) {
       throw new BadRequestException("Token is Illegal");
@@ -299,20 +297,21 @@ public class ConsumerService {
       return createAppConsumerRole;
     }
 
-    String operator = userInfoHolder.getUser().getUserId();
     ConsumerRole consumerRole = createConsumerRole(consumerId, roleId, operator);
     return consumerRoleRepository.save(consumerRole);
   }
 
 
   @Transactional
-  public ConsumerRole assignAppRoleToConsumer(String token, String appId) {
+  public ConsumerRole assignAppRoleToConsumer(String token, String appId, String operator) {
+    validateOperator(operator);
     Long consumerId = getConsumerIdByToken(token);
-    return assignAppRoleToConsumer(consumerId, appId);
+    return assignAppRoleToConsumer(consumerId, appId, operator);
   }
 
   @Transactional
-  public ConsumerRole assignAppRoleToConsumer(Long consumerId, String appId) {
+  public ConsumerRole assignAppRoleToConsumer(Long consumerId, String appId, String operator) {
+    validateOperator(operator);
     if (consumerId == null) {
       throw new BadRequestException("Token is Illegal");
     }
@@ -331,7 +330,6 @@ public class ConsumerService {
       return managedModifyRole;
     }
 
-    String operator = userInfoHolder.getUser().getUserId();
     ConsumerRole consumerRole = createConsumerRole(consumerId, roleId, operator);
     return consumerRoleRepository.save(consumerRole);
   }
@@ -347,9 +345,9 @@ public class ConsumerService {
     return consumerTokenRepository.save(entity);
   }
 
-  private ConsumerToken generateConsumerToken(Consumer consumer, Integer rateLimit, Date expires) {
+  private ConsumerToken generateConsumerToken(Consumer consumer, Integer rateLimit, Date expires,
+      String createdBy) {
     long consumerId = consumer.getId();
-    String createdBy = userInfoHolder.getUser().getUserId();
     Date createdTime = new Date();
 
     if (rateLimit == null || rateLimit < 0) {
@@ -389,6 +387,7 @@ public class ConsumerService {
   }
 
   ConsumerRole createConsumerRole(Long consumerId, Long roleId, String operator) {
+    validateOperator(operator);
     ConsumerRole consumerRole = new ConsumerRole();
 
     consumerRole.setConsumerId(consumerId);
@@ -397,6 +396,12 @@ public class ConsumerService {
     consumerRole.setDataChangeLastModifiedBy(operator);
 
     return consumerRole;
+  }
+
+  private void validateOperator(String operator) {
+    if (Strings.isNullOrEmpty(operator) || operator.trim().isEmpty()) {
+      throw new BadRequestException("operator should not be null or empty");
+    }
   }
 
   public Set<String> findAppIdsAuthorizedByConsumerId(long consumerId) {

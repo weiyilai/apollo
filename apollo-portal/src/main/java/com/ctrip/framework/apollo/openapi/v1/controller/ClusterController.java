@@ -21,6 +21,7 @@ import com.ctrip.framework.apollo.audit.annotation.OpType;
 import com.ctrip.framework.apollo.openapi.server.service.ClusterOpenApiService;
 import com.ctrip.framework.apollo.portal.component.UserIdentityContextHolder;
 import com.ctrip.framework.apollo.portal.constant.UserIdentityConstants;
+import com.ctrip.framework.apollo.portal.entity.bo.UserInfo;
 import com.ctrip.framework.apollo.portal.spi.UserInfoHolder;
 import com.ctrip.framework.apollo.portal.spi.UserService;
 import java.util.Objects;
@@ -64,14 +65,9 @@ public class ClusterController implements ClusterManagementApi {
     }
 
     String clusterName = cluster.getName();
-    String operator;
-    if (UserIdentityConstants.USER.equals(UserIdentityContextHolder.getAuthType())) {
-      operator = userInfoHolder.getUser().getUserId();
-      cluster.setDataChangeLastModifiedBy(operator);
-      cluster.setDataChangeCreatedBy(operator);
-    } else {
-      operator = cluster.getDataChangeCreatedBy();
-    }
+    String operator = resolveOperator(cluster.getDataChangeCreatedBy());
+    cluster.setDataChangeLastModifiedBy(operator);
+    cluster.setDataChangeCreatedBy(operator);
 
     RequestPrecondition.checkArguments(!StringUtils.isContainEmpty(clusterName, operator),
         "name and dataChangeCreatedBy should not be null or empty");
@@ -81,11 +77,7 @@ public class ClusterController implements ClusterManagementApi {
           .invalidClusterNameFormat(InputValidator.INVALID_CLUSTER_NAMESPACE_MESSAGE);
     }
 
-    if (userService.findByUserId(operator) == null) {
-      throw BadRequestException.userNotExists(operator);
-    }
-
-    return ResponseEntity.ok(this.clusterOpenApiService.createCluster(env, cluster));
+    return ResponseEntity.ok(this.clusterOpenApiService.createCluster(env, cluster, operator));
   }
 
   /**
@@ -94,19 +86,30 @@ public class ClusterController implements ClusterManagementApi {
   @PreAuthorize(value = "@unifiedPermissionValidator.isAppAdmin(#appId)")
   @ApolloAuditLog(type = OpType.DELETE, name = "Cluster.delete")
   @Override
-  public ResponseEntity<Object> deleteCluster(String env, String appId, String clusterName,
+  public ResponseEntity<Void> deleteCluster(String env, String appId, String clusterName,
       String operator) {
-    if (UserIdentityConstants.CONSUMER.equals(UserIdentityContextHolder.getAuthType())) {
-      RequestPrecondition.checkArguments(!StringUtils.isContainEmpty(operator),
-          "operator should not be null or empty");
+    String resolvedOperator = resolveOperator(operator);
 
-      if (userService.findByUserId(operator) == null) {
-        throw BadRequestException.userNotExists(operator);
+    clusterOpenApiService.deleteCluster(env, appId, clusterName, resolvedOperator);
+    return ResponseEntity.ok().build();
+  }
+
+  private String resolveOperator(String operator) {
+    if (UserIdentityConstants.USER.equals(UserIdentityContextHolder.getAuthType())) {
+      UserInfo loginUser = userInfoHolder.getUser();
+      if (loginUser == null || StringUtils.isBlank(loginUser.getUserId())) {
+        throw new BadRequestException("Current user not found");
       }
+      return loginUser.getUserId();
     }
 
-    clusterOpenApiService.deleteCluster(env, appId, clusterName);
-    return ResponseEntity.ok().build();
+    RequestPrecondition.checkArguments(!StringUtils.isContainEmpty(operator),
+        "operator should not be null or empty");
+
+    if (userService.findByUserId(operator) == null) {
+      throw BadRequestException.userNotExists(operator);
+    }
+    return operator;
   }
 
 }
