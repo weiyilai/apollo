@@ -17,6 +17,7 @@
 package com.ctrip.framework.apollo.openapi.server.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -25,6 +26,7 @@ import static org.mockito.Mockito.when;
 
 import com.ctrip.framework.apollo.common.dto.ItemChangeSets;
 import com.ctrip.framework.apollo.common.dto.ItemDTO;
+import com.ctrip.framework.apollo.common.dto.NamespaceDTO;
 import com.ctrip.framework.apollo.common.dto.PageDTO;
 import com.ctrip.framework.apollo.common.exception.BadRequestException;
 import com.ctrip.framework.apollo.openapi.model.OpenItemDTO;
@@ -38,6 +40,7 @@ import com.ctrip.framework.apollo.portal.entity.vo.ItemDiffs;
 import com.ctrip.framework.apollo.portal.entity.vo.NamespaceIdentifier;
 import com.ctrip.framework.apollo.portal.environment.Env;
 import com.ctrip.framework.apollo.portal.service.ItemService;
+import com.ctrip.framework.apollo.portal.service.NamespaceService;
 import java.util.Collections;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -62,11 +65,14 @@ class ServerItemOpenApiServiceTest {
   @Mock
   private ItemService itemService;
 
+  @Mock
+  private NamespaceService namespaceService;
+
   private ServerItemOpenApiService service;
 
   @BeforeEach
   void setUp() {
-    service = new ServerItemOpenApiService(itemService);
+    service = new ServerItemOpenApiService(itemService, namespaceService);
   }
 
   @Test
@@ -92,6 +98,11 @@ class ServerItemOpenApiServiceTest {
 
   @Test
   void batchUpdateItemsByTextShouldStampPathFieldsAndDelegate() {
+    NamespaceDTO namespace = new NamespaceDTO();
+    namespace.setId(88L);
+    when(namespaceService.loadNamespaceBaseInfo(APP_ID, Env.valueOf(ENV), CLUSTER, NAMESPACE))
+        .thenReturn(namespace);
+
     OpenNamespaceTextModel model = new OpenNamespaceTextModel();
     model.setNamespaceId(10L);
     model.setFormat("properties");
@@ -106,7 +117,22 @@ class ServerItemOpenApiServiceTest {
     assertThat(delegated.getEnv()).isEqualTo(Env.valueOf(ENV));
     assertThat(delegated.getClusterName()).isEqualTo(CLUSTER);
     assertThat(delegated.getNamespaceName()).isEqualTo(NAMESPACE);
-    assertThat(delegated.getNamespaceId()).isEqualTo(10L);
+    assertThat(delegated.getNamespaceId()).isEqualTo(88L);
+  }
+
+  @Test
+  void batchUpdateItemsByTextShouldRejectMissingNamespace() {
+    when(namespaceService.loadNamespaceBaseInfo(APP_ID, Env.valueOf(ENV), CLUSTER, NAMESPACE))
+        .thenThrow(BadRequestException.namespaceNotExists(APP_ID, CLUSTER, NAMESPACE));
+
+    OpenNamespaceTextModel model = new OpenNamespaceTextModel();
+    model.setFormat("properties");
+    model.setConfigText("timeout=100");
+
+    assertThatThrownBy(
+        () -> service.batchUpdateItemsByText(APP_ID, ENV, CLUSTER, NAMESPACE, model, "operator"))
+        .isInstanceOf(BadRequestException.class);
+    verify(itemService, never()).updateConfigItemByText(any(), any());
   }
 
   @Test
