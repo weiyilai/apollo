@@ -14,60 +14,70 @@
  * limitations under the License.
  *
  */
-package com.ctrip.framework.apollo.portal.controller;
+package com.ctrip.framework.apollo.openapi.v1.controller;
 
 import com.ctrip.framework.apollo.common.exception.BadRequestException;
 import com.ctrip.framework.apollo.core.utils.StringUtils;
+import com.ctrip.framework.apollo.openapi.api.PortalUserManagementApi;
+import com.ctrip.framework.apollo.openapi.model.OpenUserDTO;
+import com.ctrip.framework.apollo.openapi.model.OpenUserInfoDTO;
+import com.ctrip.framework.apollo.openapi.util.OpenApiModelConverters;
 import com.ctrip.framework.apollo.portal.component.UnifiedPermissionValidator;
-import com.ctrip.framework.apollo.portal.entity.bo.UserInfo;
+import com.ctrip.framework.apollo.portal.component.UserIdentityContextHolder;
+import com.ctrip.framework.apollo.portal.constant.UserIdentityConstants;
 import com.ctrip.framework.apollo.portal.entity.po.UserPO;
-import com.ctrip.framework.apollo.portal.spi.LogoutHandler;
 import com.ctrip.framework.apollo.portal.spi.UserInfoHolder;
 import com.ctrip.framework.apollo.portal.spi.UserService;
 import com.ctrip.framework.apollo.portal.spi.springsecurity.SpringSecurityUserService;
 import com.ctrip.framework.apollo.portal.util.checker.AuthUserPasswordChecker;
 import com.ctrip.framework.apollo.portal.util.checker.CheckResult;
 import java.util.List;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * @deprecated Portal UI uses /openapi/v1 endpoints. This legacy WebAPI controller is kept for
- *     compatibility.
+ * OpenAPI v1 controller for portal user management.
  */
-@Deprecated
-@RestController
-public class UserInfoController {
+@RestController("openapiPortalUserController")
+public class PortalUserController implements PortalUserManagementApi {
   private static final int USER_ENABLED = 1;
 
   private final UserInfoHolder userInfoHolder;
-  private final LogoutHandler logoutHandler;
   private final UserService userService;
   private final AuthUserPasswordChecker passwordChecker;
   private final UnifiedPermissionValidator unifiedPermissionValidator;
 
-  public UserInfoController(final UserInfoHolder userInfoHolder, final LogoutHandler logoutHandler,
-      final UserService userService, final AuthUserPasswordChecker passwordChecker,
+  public PortalUserController(UserInfoHolder userInfoHolder, UserService userService,
+      AuthUserPasswordChecker passwordChecker,
       UnifiedPermissionValidator unifiedPermissionValidator) {
     this.userInfoHolder = userInfoHolder;
-    this.logoutHandler = logoutHandler;
     this.userService = userService;
     this.passwordChecker = passwordChecker;
     this.unifiedPermissionValidator = unifiedPermissionValidator;
   }
 
-  @PostMapping("/users")
-  public void createOrUpdateUser(
-      @RequestParam(value = "isCreate", defaultValue = "false") boolean isCreate,
-      @RequestBody UserPO user) {
+  @Override
+  public ResponseEntity<OpenUserInfoDTO> getCurrentUser() {
+    requirePortalUserRequest();
+    return ResponseEntity.ok(OpenApiModelConverters.fromUserInfo(userInfoHolder.getUser()));
+  }
+
+  @Override
+  public ResponseEntity<List<OpenUserInfoDTO>> searchUsers(String keyword,
+      Boolean includeInactiveUsers, Integer offset, Integer limit) {
+    requirePortalUserRequest();
+    List<OpenUserInfoDTO> users = OpenApiModelConverters
+        .fromUserInfos(userService.searchUsers(keyword, offset == null ? 0 : offset,
+            limit == null ? 10 : limit, Boolean.TRUE.equals(includeInactiveUsers)));
+    return ResponseEntity.ok(users);
+  }
+
+  @Override
+  public ResponseEntity<Void> createOrUpdateUser(OpenUserDTO openUserDTO, Boolean isCreate) {
+    requirePortalUserRequest();
+    UserPO user = OpenApiModelConverters.toUserPO(openUserDTO);
     if (StringUtils.isContainEmpty(user.getUsername(), user.getPassword())) {
       throw new BadRequestException("Username and password can not be empty.");
     }
@@ -75,7 +85,7 @@ public class UserInfoController {
     if (!unifiedPermissionValidator.isSuperAdmin()
         && (!user.getUsername().equals(userInfoHolder.getUser().getUserId())
             || user.getEnabled() != USER_ENABLED)) {
-      throw new UnsupportedOperationException("Create or update user operation is unsupported");
+      throw new AccessDeniedException("Create or update user operation is forbidden");
     }
 
     CheckResult pwdCheckRes = passwordChecker.checkWeakPassword(user.getPassword());
@@ -84,7 +94,7 @@ public class UserInfoController {
     }
 
     if (userService instanceof SpringSecurityUserService) {
-      if (isCreate) {
+      if (Boolean.TRUE.equals(isCreate)) {
         ((SpringSecurityUserService) userService).create(user);
       } else {
         ((SpringSecurityUserService) userService).update(user);
@@ -92,40 +102,25 @@ public class UserInfoController {
     } else {
       throw new UnsupportedOperationException("Create or update user operation is unsupported");
     }
+    return ResponseEntity.ok().build();
   }
 
+  @Override
   @PreAuthorize(value = "@unifiedPermissionValidator.isSuperAdmin()")
-  @PutMapping("/users/enabled")
-  public void changeUserEnabled(@RequestBody UserPO user) {
+  public ResponseEntity<Void> changeUserEnabled(OpenUserDTO openUserDTO) {
+    requirePortalUserRequest();
+    UserPO user = OpenApiModelConverters.toUserPO(openUserDTO);
     if (userService instanceof SpringSecurityUserService) {
       ((SpringSecurityUserService) userService).changeEnabled(user);
     } else {
       throw new UnsupportedOperationException("change user enabled is unsupported");
     }
+    return ResponseEntity.ok().build();
   }
 
-  @GetMapping("/user")
-  public UserInfo getCurrentUserName() {
-    return userInfoHolder.getUser();
+  private void requirePortalUserRequest() {
+    if (!UserIdentityConstants.USER.equals(UserIdentityContextHolder.getAuthType())) {
+      throw new AccessDeniedException("Portal user session is required");
+    }
   }
-
-  @GetMapping("/user/logout")
-  public void logout(HttpServletRequest request, HttpServletResponse response) {
-    logoutHandler.logout(request, response);
-  }
-
-  @GetMapping("/users")
-  public List<UserInfo> searchUsersByKeyword(@RequestParam(value = "keyword") String keyword,
-      @RequestParam(value = "includeInactiveUsers",
-          defaultValue = "false") boolean includeInactiveUsers,
-      @RequestParam(value = "offset", defaultValue = "0") int offset,
-      @RequestParam(value = "limit", defaultValue = "10") int limit) {
-    return userService.searchUsers(keyword, offset, limit, includeInactiveUsers);
-  }
-
-  @GetMapping("/users/{userId}")
-  public UserInfo getUserByUserId(@PathVariable String userId) {
-    return userService.findByUserId(userId);
-  }
-
 }
