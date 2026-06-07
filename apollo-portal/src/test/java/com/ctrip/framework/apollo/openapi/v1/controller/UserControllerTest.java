@@ -22,8 +22,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
+import com.ctrip.framework.apollo.common.exception.BadRequestException;
 import com.ctrip.framework.apollo.openapi.model.OpenUserDTO;
 import com.ctrip.framework.apollo.openapi.model.OpenUserInfoDTO;
 import com.ctrip.framework.apollo.portal.component.UnifiedPermissionValidator;
@@ -49,13 +51,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 
 /**
- * Tests Portal User OpenAPI endpoints that are backed by the portal user session.
+ * Tests User Management OpenAPI endpoints.
  */
 @ExtendWith(MockitoExtension.class)
-public class PortalUserControllerTest {
+public class UserControllerTest {
 
   @InjectMocks
-  private PortalUserController portalUserController;
+  private UserController userController;
 
   @Mock
   private SpringSecurityUserService userService;
@@ -68,6 +70,9 @@ public class PortalUserControllerTest {
 
   @Mock
   private UserInfoHolder userInfoHolder;
+
+  @Mock
+  private OpenApiOperatorResolver operatorResolver;
 
   @BeforeEach
   public void setUp() {
@@ -88,7 +93,7 @@ public class PortalUserControllerTest {
     currentUser.setEnabled(1);
     when(userInfoHolder.getUser()).thenReturn(currentUser);
 
-    ResponseEntity<OpenUserInfoDTO> response = portalUserController.getCurrentUser();
+    ResponseEntity<OpenUserInfoDTO> response = userController.getCurrentUser();
 
     assertEquals(200, response.getStatusCode().value());
     assertNotNull(response.getBody());
@@ -103,8 +108,7 @@ public class PortalUserControllerTest {
     UserInfo user = new UserInfo("jason");
     when(userService.searchUsers("ja", 2, 20, true)).thenReturn(Collections.singletonList(user));
 
-    ResponseEntity<List<OpenUserInfoDTO>> response =
-        portalUserController.searchUsers("ja", true, 2, 20);
+    ResponseEntity<List<OpenUserInfoDTO>> response = userController.searchUsers("ja", true, 2, 20);
 
     assertEquals(200, response.getStatusCode().value());
     assertNotNull(response.getBody());
@@ -124,7 +128,7 @@ public class PortalUserControllerTest {
     when(unifiedPermissionValidator.isSuperAdmin()).thenReturn(true);
     when(passwordChecker.checkWeakPassword(anyString())).thenReturn(new CheckResult(true, ""));
 
-    ResponseEntity<Void> response = portalUserController.createOrUpdateUser(user, true);
+    ResponseEntity<Void> response = userController.createOrUpdateUser(user, true, "ignored");
 
     assertEquals(200, response.getStatusCode().value());
     ArgumentCaptor<UserPO> captor = ArgumentCaptor.forClass(UserPO.class);
@@ -134,6 +138,7 @@ public class PortalUserControllerTest {
     assertEquals("password", captor.getValue().getPassword());
     assertEquals("jason@example.com", captor.getValue().getEmail());
     assertEquals(1, captor.getValue().getEnabled());
+    verifyNoInteractions(operatorResolver);
   }
 
   @Test
@@ -146,16 +151,116 @@ public class PortalUserControllerTest {
     when(userInfoHolder.getUser()).thenReturn(currentUser);
 
     assertThrows(AccessDeniedException.class,
-        () -> portalUserController.createOrUpdateUser(user, false));
+        () -> userController.createOrUpdateUser(user, false, "ignored"));
 
-    verifyNoInteractions(passwordChecker, userService);
+    verifyNoInteractions(passwordChecker, userService, operatorResolver);
   }
 
   @Test
-  public void searchUsersShouldRejectConsumerToken() {
+  public void searchUsersShouldRejectConsumerTokenWithoutManageUsersPermission() {
     UserIdentityContextHolder.setAuthType(UserIdentityConstants.CONSUMER);
+    when(unifiedPermissionValidator.hasManageUsersPermission()).thenReturn(false);
+
+    assertThrows(AccessDeniedException.class, () -> userController.searchUsers("ja", false, 0, 10));
+
+    verify(unifiedPermissionValidator).hasManageUsersPermission();
+    verifyNoInteractions(userService);
+  }
+
+  @Test
+  public void searchUsersShouldAllowConsumerTokenWithManageUsersPermission() {
+    UserIdentityContextHolder.setAuthType(UserIdentityConstants.CONSUMER);
+    when(unifiedPermissionValidator.hasManageUsersPermission()).thenReturn(true);
+    UserInfo user = new UserInfo("jason");
+    when(userService.searchUsers("ja", 0, 10, false)).thenReturn(Collections.singletonList(user));
+
+    ResponseEntity<List<OpenUserInfoDTO>> response = userController.searchUsers("ja", false, 0, 10);
+
+    assertEquals(200, response.getStatusCode().value());
+    assertNotNull(response.getBody());
+    assertEquals(1, response.getBody().size());
+    assertEquals("jason", response.getBody().get(0).getUserId());
+    verify(userService).searchUsers("ja", 0, 10, false);
+  }
+
+  @Test
+  public void getUserByUserIdShouldAllowConsumerTokenWithManageUsersPermission() {
+    UserIdentityContextHolder.setAuthType(UserIdentityConstants.CONSUMER);
+    when(unifiedPermissionValidator.hasManageUsersPermission()).thenReturn(true);
+    UserInfo user = new UserInfo("jason");
+    user.setName("Jason");
+    when(userService.findByUserId("jason")).thenReturn(user);
+
+    ResponseEntity<OpenUserInfoDTO> response = userController.getUserByUserId("jason");
+
+    assertEquals(200, response.getStatusCode().value());
+    assertNotNull(response.getBody());
+    assertEquals("jason", response.getBody().getUserId());
+    assertEquals("Jason", response.getBody().getName());
+  }
+
+  @Test
+  public void getUserByUserIdShouldRejectUnknownUser() {
+    when(userService.findByUserId("missing")).thenReturn(null);
+
+    assertThrows(BadRequestException.class, () -> userController.getUserByUserId("missing"));
+  }
+
+  @Test
+  public void createOrUpdateUserShouldAllowConsumerTokenWithManageUsersPermission() {
+    UserIdentityContextHolder.setAuthType(UserIdentityConstants.CONSUMER);
+    OpenUserDTO user = new OpenUserDTO();
+    user.setUsername("created");
+    user.setUserDisplayName("Created User");
+    user.setPassword("password");
+    user.setEmail("created@example.com");
+    user.setEnabled(1);
+    when(unifiedPermissionValidator.hasManageUsersPermission()).thenReturn(true);
+    when(operatorResolver.resolve("operator")).thenReturn("operator");
+    when(passwordChecker.checkWeakPassword(anyString())).thenReturn(new CheckResult(true, ""));
+
+    ResponseEntity<Void> response = userController.createOrUpdateUser(user, true, "operator");
+
+    assertEquals(200, response.getStatusCode().value());
+    ArgumentCaptor<UserPO> captor = ArgumentCaptor.forClass(UserPO.class);
+    verify(userService).create(captor.capture());
+    verify(operatorResolver).resolve("operator");
+    assertEquals("created", captor.getValue().getUsername());
+  }
+
+  @Test
+  public void createOrUpdateUserShouldRejectConsumerTokenWithoutManageUsersPermission() {
+    UserIdentityContextHolder.setAuthType(UserIdentityConstants.CONSUMER);
+    OpenUserDTO user = new OpenUserDTO();
+    user.setUsername("created");
+    user.setPassword("password");
+    user.setEnabled(1);
+    when(unifiedPermissionValidator.hasManageUsersPermission()).thenReturn(false);
 
     assertThrows(AccessDeniedException.class,
-        () -> portalUserController.searchUsers("ja", false, 0, 10));
+        () -> userController.createOrUpdateUser(user, true, "operator"));
+
+    verify(unifiedPermissionValidator).hasManageUsersPermission();
+    verifyNoMoreInteractions(unifiedPermissionValidator);
+    verifyNoInteractions(operatorResolver, passwordChecker, userService);
+  }
+
+  @Test
+  public void changeUserEnabledShouldAllowConsumerTokenWithManageUsersPermission() {
+    UserIdentityContextHolder.setAuthType(UserIdentityConstants.CONSUMER);
+    OpenUserDTO user = new OpenUserDTO();
+    user.setUsername("created");
+    user.setEnabled(0);
+    when(unifiedPermissionValidator.hasManageUsersPermission()).thenReturn(true);
+    when(operatorResolver.resolve("operator")).thenReturn("operator");
+
+    ResponseEntity<Void> response = userController.changeUserEnabled(user, "operator");
+
+    assertEquals(200, response.getStatusCode().value());
+    ArgumentCaptor<UserPO> captor = ArgumentCaptor.forClass(UserPO.class);
+    verify(userService).changeEnabled(captor.capture());
+    verify(operatorResolver).resolve("operator");
+    assertEquals("created", captor.getValue().getUsername());
+    assertEquals(0, captor.getValue().getEnabled());
   }
 }

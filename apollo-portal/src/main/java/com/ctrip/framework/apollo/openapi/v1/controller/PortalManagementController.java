@@ -47,7 +47,6 @@ import com.ctrip.framework.apollo.portal.entity.vo.EnvironmentInfo;
 import com.ctrip.framework.apollo.portal.entity.vo.PageSetting;
 import com.ctrip.framework.apollo.portal.entity.vo.SystemInfo;
 import com.ctrip.framework.apollo.portal.entity.vo.consumer.ConsumerCreateRequestVO;
-import com.ctrip.framework.apollo.portal.entity.vo.consumer.ConsumerInfo;
 import com.ctrip.framework.apollo.portal.environment.Env;
 import com.ctrip.framework.apollo.portal.environment.PortalMetaDomainService;
 import com.ctrip.framework.apollo.portal.service.AppService;
@@ -258,10 +257,14 @@ public class PortalManagementController implements PortalManagementApi {
     String operator = currentUserId();
     Consumer createdConsumer = consumerService.createConsumer(convertToConsumer(request), operator);
     Date resolvedExpires = parseConsumerExpires(expires);
+    int rateLimit = resolveConsumerRateLimit(request);
     ConsumerToken consumerToken = consumerService.generateAndSaveConsumerToken(createdConsumer,
-        request.getRateLimit(), resolvedExpires, operator);
+        rateLimit, resolvedExpires, operator);
     if (request.isAllowCreateApplication()) {
       consumerService.assignCreateApplicationRoleToConsumer(consumerToken.getToken(), operator);
+    }
+    if (request.isAllowManageUsers()) {
+      consumerService.assignManageUsersRoleToConsumer(consumerToken.getToken(), operator);
     }
     return ResponseEntity.ok(consumerService.getConsumerInfoByAppId(request.getAppId()));
   }
@@ -314,8 +317,7 @@ public class PortalManagementController implements PortalManagementApi {
   @PreAuthorize(value = "@unifiedPermissionValidator.isSuperAdmin()")
   public ResponseEntity<List<Object>> getConsumerList(Integer page, Integer size) {
     requirePortalUserRequest();
-    List<ConsumerInfo> consumers = consumerService.findConsumerInfoList(pageable(page, size));
-    return ResponseEntity.ok(asObjects(consumers));
+    return ResponseEntity.ok(asObjects(consumerService.findConsumerInfoList(pageable(page, size))));
   }
 
   @Override
@@ -626,9 +628,11 @@ public class PortalManagementController implements PortalManagementApi {
       if (request.getRateLimit() <= 0) {
         throw BadRequestException.rateLimitIsInvalid();
       }
-    } else {
-      request.setRateLimit(0);
     }
+  }
+
+  private int resolveConsumerRateLimit(ConsumerCreateRequestVO request) {
+    return request.isRateLimitEnabled() ? request.getRateLimit() : 0;
   }
 
   private PageDTO<App> searchByItem(String itemKey, Pageable pageable) {
@@ -866,6 +870,9 @@ public class PortalManagementController implements PortalManagementApi {
   }
 
   private <T> T convertBody(Object body, Class<T> clazz) {
+    if (clazz.isInstance(body)) {
+      return clazz.cast(body);
+    }
     return objectMapper.convertValue(body, clazz);
   }
 
